@@ -33,20 +33,24 @@ func (lb *LoadBalancer) Port() string {
 }
 
 func (lb *LoadBalancer) getNextAvailableServer() serverpkg.Server {
-    lb.mu.Lock()
-    defer lb.mu.Unlock()
+	// Protect the shared round-robin counter so multiple requests do not race.
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
 
-    for i := 0; i < len(lb.servers); i++ {
-        server := lb.servers[lb.roundRobinCount%len(lb.servers)]
-        lb.roundRobinCount++
-        if server.IsAlive() {
-            return server
-        }
-    }
-    return nil
+	// Walk the server list in order and skip any server that is marked unhealthy.
+	for i := 0; i < len(lb.servers); i++ {
+		// Round-robin index: 0, 1, 2, 0, 1, 2 ... across the available servers.
+		server := lb.servers[lb.roundRobinCount%len(lb.servers)]
+		lb.roundRobinCount++
+		if server.IsAlive() {
+			return server
+		}
+	}
+	return nil
 }
 
 func (lb *LoadBalancer) HandleRequest(rw http.ResponseWriter, r *http.Request) {
+	// Choose a healthy backend before forwarding the incoming request.
 	targetServer := lb.getNextAvailableServer()
 	if targetServer == nil {
 		http.Error(rw, "no healthy servers available", http.StatusServiceUnavailable)
@@ -58,26 +62,28 @@ func (lb *LoadBalancer) HandleRequest(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (lb *LoadBalancer) startHealthChecks(interval time.Duration) {
-    // Check immediately on startup so `alive` isn't false by default
-    lb.checkAll()
+	// Run one health-check pass immediately so the startup state is not stale.
+	lb.checkAll()
 
-    go func() {
-        ticker := time.NewTicker(interval)
-        defer ticker.Stop()
-        for range ticker.C {
-            lb.checkAll()
-        }
-    }()
+	// Keep checking in the background so unhealthy servers can be detected over time.
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			lb.checkAll()
+		}
+	}()
 }
 
 func (lb *LoadBalancer) checkAll() {
-    var wg sync.WaitGroup
-    for _, s := range lb.servers {
-        wg.Add(1)
-        go func(s serverpkg.Server) {
-            defer wg.Done()
-            s.RefreshHealth()
-        }(s)
-    }
-    wg.Wait()
+	// Refresh each server's health in parallel so one slow server does not block others.
+	var wg sync.WaitGroup
+	for _, s := range lb.servers {
+		wg.Add(1)
+		go func(s serverpkg.Server) {
+			defer wg.Done()
+			s.RefreshHealth()
+		}(s)
+	}
+	wg.Wait()
 }

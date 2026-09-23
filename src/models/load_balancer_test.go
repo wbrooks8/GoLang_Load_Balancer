@@ -14,6 +14,7 @@ type fakeServer struct {
 	alive bool
 }
 
+// fakeServer exists only for tests. It behaves like an upstream server without requiring a real network call.
 func (f *fakeServer) Address() string {
 	return f.addr
 }
@@ -30,6 +31,7 @@ func (f *fakeServer) Serve(rw http.ResponseWriter, r *http.Request) {
 	rw.WriteHeader(http.StatusOK)
 }
 
+// Test that requests rotate through the backend list in order.
 func TestLoadBalancerGetNextAvailableServer_RoundRobin(t *testing.T) {
 	server1 := &fakeServer{addr: "server-1", alive: true}
 	server2 := &fakeServer{addr: "server-2", alive: true}
