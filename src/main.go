@@ -6,6 +6,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"time"
 )
 
 type simpleServer struct {
@@ -23,6 +24,11 @@ type Server interface {
 	Address() string
 	IsAlive() bool
 	Serve(rw http.ResponseWriter, r *http.Request)
+}
+
+type item[V any] struct {
+	value V
+	expiry time.Time
 }
 
 func main() {
@@ -90,7 +96,15 @@ func (s *simpleServer) Address() string {
 }
 
 func (s *simpleServer) IsAlive() bool {
-	return true
+	resp, err := http.Head(s.addr)
+
+	if err != nil {
+		return false
+	}
+
+	defer resp.Body.Close()
+
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
 func (s *simpleServer) Serve(rw http.ResponseWriter, r *http.Request) {
