@@ -3,110 +3,24 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
-	"os"
-	"time"
+
+	serverpkg "github.com/wbrooks8/load_balancer/src/interface"
+	modelspkg "github.com/wbrooks8/load_balancer/src/models"
 )
 
-type simpleServer struct {
-	addr  string
-	proxy *httputil.ReverseProxy
-}
-
-type LoadBalancer struct {
-	port            string
-	roundRobinCount int
-	servers         []Server
-}
-
-type Server interface {
-	Address() string
-	IsAlive() bool
-	Serve(rw http.ResponseWriter, r *http.Request)
-}
-
-type item[V any] struct {
-	value V
-	expiry time.Time
-}
-
 func main() {
-	servers := []Server{
-		newSimpleServer("https://www.facebook.com"),
-		newSimpleServer("https://www.bing.com"),
-		newSimpleServer("https://www.duckduckgo.com"),
+	servers := []serverpkg.Server{
+		modelspkg.NewSimpleServer("https://www.facebook.com"),
+		modelspkg.NewSimpleServer("https://www.bing.com"),
+		modelspkg.NewSimpleServer("https://www.duckduckgo.com"),
 	}
 
-	lb := NewLoadBalancer("8000", servers)
+	lb := modelspkg.NewLoadBalancer("8000", servers, 15)
 
-	handleRedirect := func(rw http.ResponseWriter, req *http.Request) {
-		lb.serverProxy(rw, req)
+	http.HandleFunc("/", lb.HandleRequest)
+
+	fmt.Printf("Serving requests at 'localhost: %s'\n", lb.Port())
+	if err := http.ListenAndServe(":"+lb.Port(), nil); err != nil {
+		fmt.Printf("server error: %v\n", err)
 	}
-	http.HandleFunc("/", handleRedirect)
-
-	fmt.Printf("Serving requests at 'localhost: %s'\n", lb.port)
-
-	http.ListenAndServe(":"+lb.port, nil)
-}
-
-func newSimpleServer(addr string) *simpleServer {
-	serverUrl, err := url.Parse(addr)
-	handleErr(err)
-
-	return &simpleServer{
-		addr:  addr,
-		proxy: httputil.NewSingleHostReverseProxy(serverUrl),
-	}
-}
-
-func handleErr(err error) {
-	if err != nil {
-		fmt.Printf("error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func NewLoadBalancer(port string, servers []Server) *LoadBalancer {
-	return &LoadBalancer{
-		port:            port,
-		roundRobinCount: 0,
-		servers:         servers,
-	}
-}
-
-func (lb *LoadBalancer) getNextAvailableServer() Server {
-	server := lb.servers[lb.roundRobinCount%len(lb.servers)]
-	for !server.IsAlive() {
-		lb.roundRobinCount++
-		server = lb.servers[lb.roundRobinCount%len(lb.servers)]
-	}
-	lb.roundRobinCount++
-	return server
-}
-
-func (lb *LoadBalancer) serverProxy(rw http.ResponseWriter, r *http.Request) {
-	targetServer := lb.getNextAvailableServer()
-	fmt.Printf("forwarding request to address %q\n", targetServer.Address())
-	targetServer.Serve(rw, r)
-}
-
-func (s *simpleServer) Address() string {
-	return s.addr
-}
-
-func (s *simpleServer) IsAlive() bool {
-	resp, err := http.Head(s.addr)
-
-	if err != nil {
-		return false
-	}
-
-	defer resp.Body.Close()
-
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
-}
-
-func (s *simpleServer) Serve(rw http.ResponseWriter, r *http.Request) {
-	s.proxy.ServeHTTP(rw, r)
 }
